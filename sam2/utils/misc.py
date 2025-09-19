@@ -16,6 +16,19 @@ from tqdm import tqdm
 
 
 def get_sdpa_settings():
+    """返回用于选择注意力实现的设置。
+
+    - 对 CUDA: 沿用原有逻辑，根据架构与 PyTorch 版本决定是否启用 FlashAttention/Math kernel。
+    - 对 NPU 或无 CUDA: 关闭 FlashAttention，使用 PyTorch 内置 SDPA/数学实现。
+    """
+    # 优先识别 NPU 环境
+    if hasattr(torch, "npu") and torch.npu.is_available():
+        # NPU 上无 CUDA FlashAttention 内核，直接关闭；使用 PyTorch SDPA 或回退实现
+        old_gpu = False
+        use_flash_attn = False
+        math_kernel_on = True
+        return old_gpu, use_flash_attn, math_kernel_on
+
     if torch.cuda.is_available():
         old_gpu = torch.cuda.get_device_properties(0).major < 7
         # only use Flash Attention on Ampere (8.0) or newer GPUs
@@ -37,11 +50,12 @@ def get_sdpa_settings():
                 stacklevel=2,
             )
         math_kernel_on = pytorch_version < (2, 2) or not use_flash_attn
-    else:
-        old_gpu = True
-        use_flash_attn = False
-        math_kernel_on = True
+        return old_gpu, use_flash_attn, math_kernel_on
 
+    # 无 CUDA/NPU 时，统一走 math kernel/SDPA 回退
+    old_gpu = True
+    use_flash_attn = False
+    math_kernel_on = True
     return old_gpu, use_flash_attn, math_kernel_on
 
 

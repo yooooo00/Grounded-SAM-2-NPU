@@ -33,7 +33,17 @@ TEXT_PROMPT = args.text_prompt
 IMG_PATH = args.img_path
 SAM2_CHECKPOINT = args.sam2_checkpoint
 SAM2_MODEL_CONFIG = args.sam2_model_config
-DEVICE = "cuda" if torch.cuda.is_available() and not args.force_cpu else "cpu"
+if not args.force_cpu and hasattr(torch, "npu"):
+    try:
+        import torch_npu  # noqa: F401
+        if torch.npu.is_available():
+            DEVICE = "npu"
+        else:
+            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+else:
+    DEVICE = "cuda" if torch.cuda.is_available() and not args.force_cpu else "cpu"
 OUTPUT_DIR = Path(args.output_dir)
 DUMP_JSON_RESULTS = not args.no_dump_json
 
@@ -44,7 +54,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # use bfloat16
 torch.autocast(device_type=DEVICE, dtype=torch.bfloat16).__enter__()
 
-if torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
+if DEVICE == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
     # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True

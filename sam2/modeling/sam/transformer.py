@@ -26,19 +26,24 @@ ALLOW_ALL_KERNELS = False
 
 
 def sdp_kernel_context(dropout_p):
-    """
-    Get the context for the attention scaled dot-product kernel. We use Flash Attention
-    by default, but fall back to all available kernels if Flash Attention fails.
+    """为注意力 SDPA 选择合适的内核上下文。
+
+    - CUDA 上：使用 torch.backends.cuda.sdp_kernel 控制 Flash/Math/MemEfficient。
+    - NPU/CPU 上：返回空上下文，直接调用 PyTorch 的 SDPA 或回退实现。
     """
     if ALLOW_ALL_KERNELS:
         return contextlib.nullcontext()
 
-    return torch.backends.cuda.sdp_kernel(
-        enable_flash=USE_FLASH_ATTN,
-        # if Flash attention kernel is off, then math kernel needs to be enabled
-        enable_math=(OLD_GPU and dropout_p > 0.0) or MATH_KERNEL_ON,
-        enable_mem_efficient=OLD_GPU,
-    )
+    if torch.cuda.is_available():
+        return torch.backends.cuda.sdp_kernel(
+            enable_flash=USE_FLASH_ATTN,
+            # if Flash attention kernel is off, then math kernel needs to be enabled
+            enable_math=(OLD_GPU and dropout_p > 0.0) or MATH_KERNEL_ON,
+            enable_mem_efficient=OLD_GPU,
+        )
+
+    # 非 CUDA 设备（如 NPU/CPU）
+    return contextlib.nullcontext()
 
 
 class TwoWayTransformer(nn.Module):
@@ -271,14 +276,20 @@ class Attention(nn.Module):
         except Exception as e:
             # Fall back to all kernels if the Flash attention kernel fails
             warnings.warn(
-                f"Flash Attention kernel failed due to: {e}\nFalling back to all available "
-                f"kernels for scaled_dot_product_attention (which may have a slower speed).",
+                f"Scaled-Dot-Product Attention fast kernel failed: {e}\n"
+                f"Falling back to alternative kernels or explicit matmul implementation.",
                 category=UserWarning,
                 stacklevel=2,
             )
             global ALLOW_ALL_KERNELS
             ALLOW_ALL_KERNELS = True
-            out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+            try:
+                out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+            except Exception:
+                # Explicit QK^T softmax V fallback (inference only; dropout=0)
+                scale = q.size(-1) ** -0.5
+                attn = torch.matmul(q, k.transpose(-2, -1)) * scale
+                out = torch.matmul(torch.softmax(attn, dim=-1), v)
 
         out = self._recombine_heads(out)
         out = self.out_proj(out)
@@ -343,16 +354,20 @@ class RoPEAttention(Attention):
             with sdp_kernel_context(dropout_p):
                 out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
         except Exception as e:
-            # Fall back to all kernels if the Flash attention kernel fails
             warnings.warn(
-                f"Flash Attention kernel failed due to: {e}\nFalling back to all available "
-                f"kernels for scaled_dot_product_attention (which may have a slower speed).",
+                f"Scaled-Dot-Product Attention fast kernel failed: {e}\n"
+                f"Falling back to alternative kernels or explicit matmul implementation.",
                 category=UserWarning,
                 stacklevel=2,
             )
             global ALLOW_ALL_KERNELS
             ALLOW_ALL_KERNELS = True
-            out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+            try:
+                out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+            except Exception:
+                scale = q.size(-1) ** -0.5
+                attn = torch.matmul(q, k.transpose(-2, -1)) * scale
+                out = torch.matmul(torch.softmax(attn, dim=-1), v)
 
         out = self._recombine_heads(out)
         out = self.out_proj(out)

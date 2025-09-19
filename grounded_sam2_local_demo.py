@@ -22,7 +22,17 @@ GROUNDING_DINO_CONFIG = "grounding_dino/groundingdino/config/GroundingDINO_SwinT
 GROUNDING_DINO_CHECKPOINT = "gdino_checkpoints/groundingdino_swint_ogc.pth"
 BOX_THRESHOLD = 0.35
 TEXT_THRESHOLD = 0.25
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if hasattr(torch, "npu"):
+    try:
+        import torch_npu  # noqa: F401
+        if torch.npu.is_available():
+            DEVICE = "npu"
+        else:
+            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+else:
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = Path("outputs/grounded_sam2_local_demo")
 DUMP_JSON_RESULTS = True
 
@@ -73,7 +83,7 @@ input_boxes = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
 # FIXME: figure how does this influence the G-DINO model
 torch.autocast(device_type=DEVICE, dtype=torch.bfloat16).__enter__()
 
-if torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
+if DEVICE == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
     # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True

@@ -29,7 +29,17 @@ IOU_THRESHOLD = 0.8
 WITH_SLICE_INFERENCE = False
 SLICE_WH = (480, 480)
 OVERLAP_RATIO = (0.2, 0.2)
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if hasattr(torch, "npu"):
+    try:
+        import torch_npu  # noqa: F401
+        if torch.npu.is_available():
+            DEVICE = "npu"
+        else:
+            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+else:
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = Path("outputs/grounded_sam2_dinox_demo")
 DUMP_JSON_RESULTS = True
 
@@ -151,7 +161,7 @@ Init SAM 2 Model and Predict Mask with Box Prompt
 # use bfloat16
 torch.autocast(device_type=DEVICE, dtype=torch.bfloat16).__enter__()
 
-if torch.cuda.get_device_properties(0).major >= 8:
+if DEVICE == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
     # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
