@@ -27,16 +27,8 @@ def build_model(cfg_path: str, weights_path: str, device: torch.device):
     """
     if _has_npu() and _has_modelzoo_impl():
         from third_party.groundingdino_npu import api as gdino_api  # type: ignore
-        model = gdino_api.build_from_config(cfg_path)
-        state = torch.load(weights_path, map_location="cpu")
-        # try common keys; users may need to adapt to their integrated version
-        if isinstance(state, dict) and "model" in state:
-            state = state["model"]
-        missing, unexpected = gdino_api.safe_load_state_dict(model, state)  # user to implement
-        if missing or unexpected:
-            print("[GroundingDINO NPU adapter] State dict mismatches:",
-                  {"missing": missing, "unexpected": unexpected})
-        model.eval().to(device)
+        # Let the ModelZoo path load weights at construction time
+        model = gdino_api.build_from_config(cfg_path, weights_path)
         return model
 
     # Fallback to original inference loader
@@ -91,4 +83,3 @@ def predict(
     )
     scores = logits  # logits already filtered by threshold inside builtin path
     return boxes, scores, phrases
-

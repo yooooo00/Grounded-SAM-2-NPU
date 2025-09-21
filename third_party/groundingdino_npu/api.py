@@ -43,11 +43,43 @@ class _InferencerHolder:
             init_kwargs["weights"] = weights_path
 
         self.inferencer = DetInferencer(**init_kwargs)
+        # Optional: TorchAir compile path (for performance). Enable by env.
+        if os.environ.get("ENABLE_TORCHAIR_COMPILE", "0") == "1":
+            try:
+                import torchair as tng
+                from torchair.configs.compiler_config import CompilerConfig
+                # optional registration (if user copied these helpers in place)
+                try:
+                    import third_party.groundingdino_npu.register_im2col_to_torchair  # noqa: F401
+                    import third_party.groundingdino_npu.register_roll_to_torchair  # noqa: F401
+                except Exception:
+                    pass
+
+                config = CompilerConfig()
+                config.experimental_config.frozen_parameter = True
+                config.experimental_config.tiling_schedule_optimize = True
+                npu_backend = tng.get_npu_backend(compiler_config=config)
+
+                # compile common submodules if present
+                m = self.inferencer.model
+                for name in ["backbone", "encoder", "decoder", "language_model"]:
+                    if hasattr(m, name):
+                        sub = getattr(m, name)
+                        setattr(m, name, torch.compile(sub, dynamic=False, fullgraph=True, backend=npu_backend))
+                        try:
+                            tng.use_internal_format_weight(getattr(m, name))
+                        except Exception:
+                            pass
+            except Exception as e:
+                print("[GroundingDINO NPU api] TorchAir compile disabled due to:", e)
 
 
-def build_from_config(cfg_path: str):
-    # We return the holder; weights are applied later in safe_load_state_dict
-    return _InferencerHolder(cfg_path, weights_path=None, device="npu")
+def build_from_config(cfg_path: str, weights_path: str | None = None):
+    """Construct DetInferencer holder with config and optional weights.
+
+    Passing weights here aligns with ModelZoo usage and avoids manual state_dict load.
+    """
+    return _InferencerHolder(cfg_path, weights_path=weights_path, device="npu")
 
 
 def safe_load_state_dict(model_like: _InferencerHolder, state_dict) -> Tuple[List[str], List[str]]:
@@ -160,4 +192,3 @@ def infer(
         "scores": torch.from_numpy(scores),
         "labels": labels,
     }
-
