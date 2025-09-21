@@ -9,7 +9,9 @@ from pathlib import Path
 from torchvision.ops import box_convert
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-from grounding_dino.groundingdino.util.inference import load_model, load_image, predict
+from grounding_dino.groundingdino.util.inference import load_image
+from adapters.groundingdino_npu_adapter import build_model as build_dino_model, predict as dino_predict
+from npu_utils.device import get_device, autocast_for
 
 """
 Hyper parameters
@@ -22,17 +24,7 @@ GROUNDING_DINO_CONFIG = "grounding_dino/groundingdino/config/GroundingDINO_SwinT
 GROUNDING_DINO_CHECKPOINT = "gdino_checkpoints/groundingdino_swint_ogc.pth"
 BOX_THRESHOLD = 0.35
 TEXT_THRESHOLD = 0.25
-if hasattr(torch, "npu"):
-    try:
-        import torch_npu  # noqa: F401
-        if torch.npu.is_available():
-            DEVICE = "npu"
-        else:
-            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-else:
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = get_device()
 OUTPUT_DIR = Path("outputs/grounded_sam2_local_demo")
 DUMP_JSON_RESULTS = True
 
@@ -48,11 +40,11 @@ model_cfg = SAM2_MODEL_CONFIG
 sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=DEVICE)
 sam2_predictor = SAM2ImagePredictor(sam2_model)
 
-# build grounding dino model
-grounding_model = load_model(
-    model_config_path=GROUNDING_DINO_CONFIG, 
-    model_checkpoint_path=GROUNDING_DINO_CHECKPOINT,
-    device=DEVICE
+# build grounding dino model (NPU: prefer ModelZoo adapter; fallback to builtin)
+grounding_model = build_dino_model(
+    GROUNDING_DINO_CONFIG,
+    GROUNDING_DINO_CHECKPOINT,
+    torch.device(DEVICE),
 )
 
 
@@ -65,13 +57,13 @@ image_source, image = load_image(img_path)
 
 sam2_predictor.set_image(image_source)
 
-boxes, confidences, labels = predict(
+boxes, confidences, labels = dino_predict(
     model=grounding_model,
     image=image,
     caption=text,
     box_threshold=BOX_THRESHOLD,
     text_threshold=TEXT_THRESHOLD,
-    device=DEVICE
+    device=torch.device(DEVICE),
 )
 
 # process the box prompt for SAM 2
@@ -81,19 +73,18 @@ input_boxes = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
 
 
 # FIXME: figure how does this influence the G-DINO model
-torch.autocast(device_type=DEVICE, dtype=torch.bfloat16).__enter__()
-
-if DEVICE == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
+if DEVICE.type == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_properties(0).major >= 8:
     # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-masks, scores, logits = sam2_predictor.predict(
-    point_coords=None,
-    point_labels=None,
-    box=input_boxes,
-    multimask_output=False,
-)
+with autocast_for(DEVICE):
+    masks, scores, logits = sam2_predictor.predict(
+        point_coords=None,
+        point_labels=None,
+        box=input_boxes,
+        multimask_output=False,
+    )
 
 """
 Post-process the output of the model to get the masks, scores, and logits for visualization

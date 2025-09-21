@@ -1,0 +1,10 @@
+hydra-core
+omegaconf
+einops
+Pillow
+tqdm
+opencv-python
+supervision
+pycocotools
+yacs
+huggingface-hub
