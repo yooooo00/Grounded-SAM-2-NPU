@@ -1,4 +1,5 @@
 import os
+import contextlib
 import cv2
 import json
 import torch
@@ -11,7 +12,6 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from grounding_dino.groundingdino.util.inference import load_image
 from adapters.groundingdino_npu_adapter import build_model as build_dino_model, predict as dino_predict
-from npu_utils.device import get_device, autocast_for
 
 """
 Hyper parameters
@@ -24,7 +24,22 @@ GROUNDING_DINO_CONFIG = "grounding_dino/groundingdino/config/GroundingDINO_SwinT
 GROUNDING_DINO_CHECKPOINT = "gdino_checkpoints/groundingdino_swint_ogc.pth"
 BOX_THRESHOLD = 0.35
 TEXT_THRESHOLD = 0.25
-DEVICE = get_device()
+if hasattr(torch, "npu"):
+    try:
+        import torch_npu  # noqa: F401
+        DEVICE = torch.device("npu") if torch.npu.is_available() else (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    except Exception:
+        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+else:
+    DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+def autocast_for(device):
+    dev_type = device.type if isinstance(device, torch.device) else str(device)
+    if dev_type == "npu":
+        return torch.autocast(device_type="npu", dtype=torch.bfloat16)
+    if dev_type == "cuda":
+        return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return contextlib.nullcontext()
 OUTPUT_DIR = Path("outputs/grounded_sam2_local_demo")
 DUMP_JSON_RESULTS = True
 
