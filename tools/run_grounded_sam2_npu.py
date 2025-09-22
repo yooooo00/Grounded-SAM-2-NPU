@@ -25,13 +25,34 @@ def parse_args():
     return p.parse_args()
 
 
+def _resolve_device(name: str) -> torch.device:
+    name = (name or "").lower()
+    if name == "npu":
+        try:
+            import torch_npu  # noqa: F401
+        except Exception as e:
+            raise RuntimeError(
+                "Requested device 'npu' but failed to import torch_npu. "
+                "Please ensure torch_npu is installed and CANN is set up."
+            ) from e
+        if not hasattr(torch, "npu") or not torch.npu.is_available():
+            raise RuntimeError("Requested device 'npu' but torch.npu.is_available() is False")
+        return torch.device("npu:0")
+    if name == "cuda":
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+        return torch.device("cuda:0")
+    # cpu or others
+    return torch.device("cpu")
+
+
 def main():
     args = parse_args()
 
     if args.enable_torchair_compile:
         os.environ["ENABLE_TORCHAIR_COMPILE"] = "1"
 
-    device = torch.device(args.device)
+    device = _resolve_device(args.device)
 
     # Build SAM2 predictor
     sam2_model = build_sam2(args.sam2_cfg, ckpt_path=args.sam2_weights, device=args.device)
@@ -70,4 +91,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
