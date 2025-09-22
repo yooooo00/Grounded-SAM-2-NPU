@@ -81,3 +81,36 @@ bash scripts/setup_npu_env.sh
 - 适配器：`adapters/groundingdino_npu_adapter.py`（自动优先选择 NPU 实现）。
 - Demo：`grounded_sam2_local_demo.py`（端到端：文本检测 + SAM2 分割）。
 
+## 10. 已完成工作（本仓改造）
+- 设备与注意力兼容
+  - SAM2 侧：去除 CUDA 专属路径；优先使用 PyTorch SDPA，若不可用则回退到显式 `QK^T`+softmax+`*V`（推理专用）。
+  - Demo 侧：自动检测 NPU，启用 `autocast(bfloat16)`；仅在 CUDA 时设置 TF32。
+- GroundingDINO NPU 适配挂钩
+  - 新增 `adapters/groundingdino_npu_adapter.py`：在 NPU 上优先调用 ModelZoo 实现（`mmdet.apis.DetInferencer`），无可用实现时回退原仓 PyTorch 路线。
+  - 新增 `third_party/groundingdino_npu/api.py`：提供最小封装（build_from_config/safe_load_state_dict/infer），并支持通过环境变量 `ENABLE_TORCHAIR_COMPILE=1` 启用 TorchAir 编译（可选）。
+  - 新增 `third_party/groundingdino_npu/README.md`：说明如何放置/复用 ModelZoo 代码。
+- 文档与脚本
+  - 新增本文件（README_NPU.md）、`requirements-npu.txt`（仅通用依赖）、`scripts/setup_npu_env.sh`（一键安装 SAM2 侧依赖）。
+  - 新增 `.gitignore` 忽略权重与 outputs。
+- Demo 改造
+  - `grounded_sam2_local_demo.py` 接入适配器；在 NPU 上优先走 ModelZoo 实现。
+
+## 11. 环境迁移指引（复用你已跑通的 ModelZoo 环境）
+- 不需要复制完整的 ModelZoo 仓库；关键是复用同一个 Python 环境（已安装 torch/torch_npu、torchair、mmengine/mmcv/mmdet 补丁）。
+- 你可以：
+  1) 直接引用你现有的 GroundingDINO 配置/权重的绝对路径（建议）。
+  2) 或将以下文件复制到本仓：
+     - 你的 GroundingDINO cfg（例如 `configs/mm_grounding_dino/xxx.py`，目录可自建）。
+     - 对应权重 `.pth`（放在 `gdino_checkpoints/`）。
+     - 可选：TorchAir 注册脚本 `register_im2col_to_torchair.py`、`register_roll_to_torchair.py`（放到 `third_party/groundingdino_npu/`），并设置 `ENABLE_TORCHAIR_COMPILE=1` 以启用编译加速。
+- 其余 mmengine/mmcv/mmdet/torchair 不需要复制源码，因为已通过 pip -e 安装在你的 Python 环境中。
+
+## 12. 下一步计划（建议）
+- Demo 覆盖
+  - 将仓内更多 demo（如 `grounded_sam2_dinox_demo.py` 等）统一接入适配器路径与命令行参数，方便无改代码直接运行。
+- 精度/性能验证
+  - 在相同图片+prompt 下，对比 NPU 与 CPU/GPU 的输出（框 IoU/掩码 IoU）；验证通过后记录一组参考指标。
+  - 在 NPU 上记录开启/关闭 TorchAir 编译、channels_last、BF16 的性能数据，形成建议配置。
+- 文档完善
+  - 增加“命令行参数版”推理入口脚本（可直接 `--image/--text/--dino-cfg/--dino-weights/--sam2-cfg/--sam2-weights`）。
+  - 根据你的实际 ModelZoo cfg/weights 路径，补充“一键命令示例”。
