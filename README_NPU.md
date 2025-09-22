@@ -47,13 +47,32 @@ pip install -e .
     - 本仓已内置适配器，会通过 `mmdet.apis.DetInferencer` 路径优先调用 ModelZoo 实现。
 
 ## 5. 运行（先跑通）
+推荐两种方式，二选一：
+
+方式 A（脚本，推荐）
 ```bash
 export ASCEND_DEVICE_ID=0
-bash scripts/run_npu_demo.sh
+bash scripts/run_grounded_sam2_npu.sh
 ```
+
+方式 B（参数化入口）
+```bash
+export ASCEND_DEVICE_ID=0
+python tools/run_grounded_sam2_npu.py \
+  --image demo_images/truck.jpg \
+  --text '$: coco' \
+  --dino-cfg /abs/path/to/grounding_dino_swin-b_pretrain_obj365_goldg_v3det.py \
+  --dino-weights /abs/path/to/grounding_dino_swin-b_pretrain_obj365_goldg_v3de-f83eef00.pth \
+  --sam2-cfg configs/sam2.1/sam2.1_hiera_l.yaml \
+  --sam2-weights checkpoints/sam2.1_hiera_large.pt \
+  --device npu
+```
+
+说明：
 - 输出目录：`outputs/grounded_sam2_local_demo/`
 - Demo 已自动检测 NPU，并在 NPU 上使用 `autocast(bfloat16)`。
 - GroundingDINO：若检测到 `third_party/groundingdino_npu/api.py` 可用，将优先走 ModelZoo NPU 实现；否则回退到原仓的纯 PyTorch 路径（可跑通但较慢）。
+- 旧脚本 `scripts/run_npu_demo.sh` 已标记为过时，将转发到新的脚本。详见 `USAGE_NPU.md`。
 
 ## 6. （可选）集成 ModelZoo GroundingDINO NPU 实现
 - 放置路径：`third_party/groundingdino_npu/`
